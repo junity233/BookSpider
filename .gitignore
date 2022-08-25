@@ -1,0 +1,5 @@
+.vscode
+.VSCodeCounter
+__pycache__
+*.db
+config.json
