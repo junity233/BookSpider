@@ -64,12 +64,6 @@ class Manager(Loggable, SettingAccessable):
     def get_thread_pool(self) -> ThreadPoolExecutor:
         return ThreadPoolExecutor(max_workers=self.max_threads_count)
 
-    def update_chapter(self, chapter: Chapter) -> None:
-        if self.db.is_chapter_exist(chapter.book_index, chapter.chapter_index):
-            self.db.update_chapter(chapter)
-        else:
-            self.db.insert_chapter(chapter)
-
     def update_book(self, book: Book) -> None:
         """
             插入书籍到数据库，若存在则更新，不存在则创建
@@ -79,13 +73,16 @@ class Manager(Loggable, SettingAccessable):
                 self.db.get_book_index(book)
                 self.db.update_book_all_info(book)
                 for chapter in book.chapters:
-                    self.update_chapter(chapter)
-                self.log_info(f"Book '{book.title}' created.")
+                    if self.db.is_chapter_exist(chapter.book_index, chapter.chapter_index):
+                        self.db.update_chapter(chapter)
+                    else:
+                        self.db.insert_chapter(chapter)
+                self.log_info(f"Book '{book.title}' updated.")
 
             else:
                 self.db.create_book(book)
                 self.db.insert_chapters(book.chapters)
-                self.log_info(f"Book '{book.title}' updated.")
+                self.log_info(f"Book '{book.title}' created.")
 
     def get_book(self, url: str, spider: Spider, **params) -> Book:
         """
@@ -101,11 +98,12 @@ class Manager(Loggable, SettingAccessable):
         # 若库中已存在并且是最新的，就跳过这本书，否则获取书籍id
         if self.db.is_book_exist(Source=url):
             book_info = self.db.query_book_info(Source=url)[0]
-            if book_info.update != datetime(1970, 1, 1) and book_info.update > book.update:
+            if book_info.update != datetime(1970, 1, 1) and book_info.update >= book.update:
+                self.log_info(f"Book {book_info.title} is already latest.")
                 return book_info
 
         menu = spider.get_book_menu(menu_data, **params)
-        self.log_info(f"Get chapter info successfully")
+        self.log_info(f"Get chapter info successfully.")
 
         def get_chapter_content_callback(task: Future, chapter: Chapter):
             exception = task.exception()
@@ -114,8 +112,13 @@ class Manager(Loggable, SettingAccessable):
                     f"Get chapter {chapter.title} failed:{exception}")
 
         chapter_list = []
+        chapter_count = 0
+
         with self.get_thread_pool() as thread_pool:
             for idx, chapter_data in menu:
+                chapter_count += 1
+                if idx < book_info.chapter_count:
+                    continue
                 chapter = book.make_chapter(idx)
                 chapter_list.append(chapter)
 
@@ -126,7 +129,7 @@ class Manager(Loggable, SettingAccessable):
 
         chapter_list.sort()
         book.chapters = chapter_list
-        book.chapter_count = len(chapter_list)
+        book.chapter_count = chapter_count
 
         self.update_book(book)
 
@@ -163,20 +166,14 @@ class Manager(Loggable, SettingAccessable):
         res = []
         lock = Lock()
 
-        def get_book_callback(task: Future, book: Book) -> None:
-            exception = task.exception()
-            if exception:
+        for book in book_list:
+            try:
+                t = self.get_book(book.source, spider, **params)
+            except Exception as e:
                 self.log_error(
-                    f"Get book '{book.title}' source='{book.source}' error:{exception}")
+                    f"Get book '{book.title}' source='{book.source}' error:{e}")
             else:
-                with lock:
-                    res.append(task.result)
-
-        with self.get_thread_pool() as thread_pool:
-            for book in book_list:
-                task = thread_pool.submit(
-                    self.get_book, book.source, spider, **params)
-                task.add_done_callback(partial(get_book_callback, book=book))
+                res.append(t)
 
         return res
 
@@ -185,7 +182,8 @@ class Manager(Loggable, SettingAccessable):
         return books
 
     def delete_book(self, book_index: int) -> None:
-        self.db.delete_book(book_index)
+        with self.db.transaction:
+            self.db.delete_book(book_index)
 
     def check_book(self, book_index: int, **params) -> None:
         self.db.check_book_exist(Id=book_index)
@@ -194,14 +192,15 @@ class Manager(Loggable, SettingAccessable):
         spider = self.spiders[book_old.spider]
 
         self.get_book(book_old.source, spider, **params)
-        self.log_info("Check book'{}' successfully.")
+        self.log_info(f"Check book'{book_old.title}' successfully.")
 
     def check_all_book(self, **params) -> None:
         book_list = self.db.query_book_info(Status=0)
         for i in book_list:
             spider = self.spiders[i.spider]
+            self.log_info(f"Checking book '{i.title}'...")
             self.get_book(i.source, spider, **params)
-        self.log_info("Check book successfully")
+        self.log_info("Check all books successfully")
 
     def export_book(self, book_index: int, out_path="") -> None:
         self.db.check_book_exist(Id=book_index)
@@ -213,7 +212,7 @@ class Manager(Loggable, SettingAccessable):
 
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(book_info.title+"\n\n")
-            f.write(book_info.desc+"-----------------------------------\n")
+            f.write(book_info.desc + "\n\n")
 
             for chapter in chapters:
                 f.write(chapter.title+"\n")

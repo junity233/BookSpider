@@ -123,7 +123,7 @@ class Spider(SettingAccessable, Loggable):
         """
         return self.post(url, params, headers, **kparams).json()
 
-    def make_book(self, title, author, source, desc="", style="", idx=-1, chapter_count=0, cover=None, cover_format=None, status=True, update=datetime(1970, 1, 1), publish=datetime(1970, 1, 1)):
+    def make_book(self, title="", author="", source="", desc="", style="", idx=-1, chapter_count=0, cover=None, cover_format=None, status=True, update=datetime(1970, 1, 1), publish=datetime(1970, 1, 1)):
         return Book(
             title, author, source, self.name, desc, style, idx, chapter_count, cover, cover_format, status, update, publish
         )
@@ -151,7 +151,7 @@ class Spider(SettingAccessable, Loggable):
     def get_book_menu(self, data: Any, **params) -> Iterable[tuple[int, Any]]:
         """
             使用 `get_book_info` 返回的信息获取书籍目录。
-            返回的目录信息应是一个可以迭代的对象，每次迭代返回一个元组，包含
+            返回的目录信息应是一个可以迭代的对象，每次迭代返回一个元组，包含章节序号和信息。
             章节信息不一定是一个Url,可以是一个dict以包含更多信息。这些信息会原封不动地转发给`get_chapter_content`方法
         """
         raise NonimplentException(
@@ -181,7 +181,7 @@ class Spider(SettingAccessable, Loggable):
 
     def get_all_book(self, **param) -> Iterable[Book]:
         """
-            获取所有的书籍列表
+            获取所有的书籍列表,只需要书籍的title与source
         """
         raise NonimplentException(
             self.__class__,

@@ -4,7 +4,6 @@ from core.manager import Manager
 
 def main(*args) -> int:
     mgr = Manager()
-
     cli_main(mgr)
 
 

@@ -2,6 +2,8 @@ from core.manager import Manager
 from core.logger import Logger
 from prettytable import PrettyTable
 
+from core.spider import Spider
+
 """
     Cli的命令模块
     在此模块内定义的所有方法都将被视为命令,除非使用not_command修饰
@@ -127,15 +129,18 @@ def book(op: str, *params):
 
         for book in mgr.query_book(**kwargs):
             table.add_row([book.idx, book.title, book.author,
-                          book.status, book.publish, book.update])
+                          "End" if book.status else "Not End", book.publish, book.update])
             cnt += 1
 
         print(f"{cnt} result in tot.\n")
         print(table)
 
-    def check(index, *params):
-        index = int(index)
-        mgr.check_book(index, *params)
+    def check(index="", *params):
+        if index == "":
+            mgr.check_all_book()
+        else:
+            index = int(index)
+            mgr.check_book(index, *params)
 
     def export(index, outpath=""):
         index = int(index)
@@ -145,8 +150,8 @@ def book(op: str, *params):
         index = int(index)
 
         confirm = input("Confirm to remove book (Yes/No):")
-        if confirm != "Yes":
-            mgr.db.delete_book(index)
+        if confirm == "Yes":
+            mgr.delete_book(index)
 
     def list_(cnt, offset):
         cnt = int(cnt)
@@ -164,6 +169,20 @@ def book(op: str, *params):
     call_func_by_op(func_table, op, *params)
 
 
+@not_command
+def select_spider(spiders: list[Spider]) -> Spider:
+    print("Select a spider:")
+    for idx, i in enumerate(spiders):
+        print(f"    {idx}. {i.name}")
+    print("")
+    num = int(input("> (number) :"))
+
+    if num < 0 or num > len(spiders):
+        logger.log_error("Invaild number.")
+
+    return spiders[num]
+
+
 def get(url, *params):
     kwargs = args_to_kwargs(params)
     vaild_spiders = mgr.get_vaild_spiders(url, **kwargs)
@@ -171,20 +190,37 @@ def get(url, *params):
         logger.log_error("No spider match the url!")
         return
 
-    print("Select a spider:")
-    for idx, i in enumerate(vaild_spiders):
-        print(f"    {idx}. {i.name}")
-    print("")
-    num = int(input("> (number) :"))
-
-    if num < 0 or num > len(vaild_spiders):
-        logger.log_error("Invaild number.")
-
-    spider = vaild_spiders[num]
+    spider = select_spider(vaild_spiders)
 
     mgr.get_book(url, spider, **kwargs)
-    mgr.db.commit()
+
+
+def site(*params):
+    spiders = list(mgr.spiders.values())
+    if len(spiders) == 0:
+        logger.log_error("No spider added.")
+        return
+
+    spider = select_spider(spiders)
+
+    mgr.get_all_book(spider, **args_to_kwargs(*params))
 
 
 def commit():
     mgr.db.commit()
+
+
+def rollback():
+    mgr.db.rollback()
+
+
+def help():
+    print("Book Spider Manual\n")
+    print("setting              | Access setting.")
+    print("book                 | Manage books")
+    print("spider               | Manage spiders")
+    print("commit               | Commit to database")
+    print("rollback             | Rollback to database")
+    print("get <url>            | Get book")
+    print("site                 | Get all book")
+    print("")

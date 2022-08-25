@@ -33,6 +33,7 @@ class BQGSpider(Spider):
         idx = dl.index(center)+2
 
         chapters = []
+        cnt = 1
 
         for i in range(idx, len(dl)):
             dd = dl[i]
@@ -43,7 +44,8 @@ class BQGSpider(Spider):
 
             chapter_title = a.text
             chapter_url = urljoin(url, a.attrib["href"])
-            chapters.append((chapter_title, chapter_url, i-idx+1))
+            chapters.append((chapter_title, chapter_url, cnt))
+            cnt += 1
 
         return book, chapters
 
@@ -51,7 +53,7 @@ class BQGSpider(Spider):
         for i in data:
             yield i[2], i
 
-    def get_chapter_content(self, chapter: Chapter, data: Any, **params) -> Chapter:
+    def get_chapter_content(self, chapter: Chapter, data: Any, silent=False, **params) -> Chapter:
         chapter.title = data[0]
 
         html = self.get_html(data[1])
@@ -61,6 +63,24 @@ class BQGSpider(Spider):
 
         chapter.content = Spider.get_ele_content(content)
 
-        self.log_info(f"Get chapter {chapter.title} successfully.")
+        if not silent:
+            self.log_info(f"Get chapter '{chapter.title}' successfully.")
 
         return chapter
+
+    def get_all_book(self, **param) -> Iterable[Book]:
+        html = self.get_html(r'https://www.xbiquge.so/top/allvisit/1.html')
+        pagenum = int(html.xpath(
+            r'//*[@id="pagestats"]//text()')[0].split('/')[1])
+
+        for i in range(1, pagenum+1):
+            html = self.get_html(
+                f'https://www.xbiquge.so/top/allvisit/{i}.html')
+            lis = html.xpath(r'//*[@id="main"]/div[1]/li')
+
+            for j in lis:
+                a = j.xpath('./span[@class="s2"]/a')[0]
+                title = a.text
+                source = a.attrib["href"]
+
+                yield self.make_book(title=title, source=source)

@@ -1,10 +1,8 @@
 from asyncio.log import logger
 from inspect import isfunction
-from getopt import getopt
 from sys import version as python_version
 import subprocess
 import logging
-import sys
 
 
 from .version import VERSION

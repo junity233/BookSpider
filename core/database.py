@@ -30,8 +30,12 @@ class Transaction:
         with self.db.db_lock:
             self.db.connection.execute("Begin Transaction;")
 
-    def __exit__(self) -> None:
-        self.db.commit()
+    def __exit__(self, exception_type, exception_value, traceback) -> None:
+        if exception_type:
+            self.db.rollback()
+            return False
+        else:
+            self.db.commit()
 
 
 class ChapterNotExistError(Exception):
@@ -98,9 +102,12 @@ class Database(Loggable):
         with self.db_lock:
             self.connection.commit()
 
+    def rollback(self) -> None:
+        with self.db_lock:
+            self.connection.rollback()
+
     def close(self) -> None:
         if self.connection:
-            self.commit()
             self.cursor.close()
             self.connection.close()
             self.cursor = self.connection = None
@@ -111,7 +118,7 @@ class Database(Loggable):
 
     def open(self, db_file_path: str) -> None:
         self.connection = sqlite3.connect(
-            db_file_path, check_same_thread=False)
+            db_file_path, check_same_thread=False, isolation_level='')
         self.cursor = self.connection.cursor()
         self.check_primary_table_exist()
         self.log_info(f"Load database '{db_file_path}' successfully.")
@@ -121,27 +128,27 @@ class Database(Loggable):
 
     def create_books_table(self) -> None:
         with self.db_lock:
-            self.execute("""
-                PRAGMA encoding = "UTF-8";
-            """)
-            self.execute("""
-                Create Table "Books"(
-                    Id           Integer            Primary Key                                    , -- 编号
-                    Title        Text                              Not null                        , -- 标题
-                    Author       Text                                          Default 'Unknown'   , -- 作者
-                    Description  Text                                          Default ''          , -- 简介
-                    Style        Text                                          Default 'Unknown'   , -- 风格
-                    Cover        Blob                                          Default Null        , -- 封面
-                    CoverFormat  Text                                          Default Null        , -- 封面格式
-                    ChapterCount int                               Not Null                        , -- 章节数
-                    Source       Text     Unique                   Not Null                        , -- 来源网址
-                    Spider       Text                              Not NUll                        , -- 来源Spider
-                    Status       int                                           Default 1           , -- 是否完结(1->完结 0->未完结)
-                    PublishDate  Text                                          Default '0000-00-00', -- 发布日期 格式 %Y-%m-%d
-                    UpdateDate   Text                                          Default '0000-00-00'  -- 更新日期 格式 %Y-%m-%d
-                );
-            """)
-            self.commit()
+            with self.transaction:
+                self.execute("""
+                    PRAGMA encoding = "UTF-8";
+                """)
+                self.execute("""
+                    Create Table "Books"(
+                        Id           Integer            Primary Key                                    , -- 编号
+                        Title        Text                              Not null                        , -- 标题
+                        Author       Text                                          Default 'Unknown'   , -- 作者
+                        Description  Text                                          Default ''          , -- 简介
+                        Style        Text                                          Default 'Unknown'   , -- 风格
+                        Cover        Blob                                          Default Null        , -- 封面
+                        CoverFormat  Text                                          Default Null        , -- 封面格式
+                        ChapterCount int                               Not Null                        , -- 章节数
+                        Source       Text     Unique                   Not Null                        , -- 来源网址
+                        Spider       Text                              Not NUll                        , -- 来源Spider
+                        Status       int                                           Default 1           , -- 是否完结(1->完结 0->未完结)
+                        PublishDate  Text                                          Default '0000-00-00', -- 发布日期 格式 %Y-%m-%d
+                        UpdateDate   Text                                          Default '0000-00-00'  -- 更新日期 格式 %Y-%m-%d
+                    );
+                """)
 
     def check_primary_table_exist(self) -> None:
         with self.db_lock:
@@ -165,13 +172,12 @@ class Database(Loggable):
                 BookId      int                 Not Null, -- 书籍编号
                 ChapterId   int                         , -- 章节编号
                 Title       Text                Not Null, -- 标题
-                Content     Text                Not Null, -- 内容
+                Content     Text                        , -- 内容
                 Foreign Key (BookId) References Books(Id)  -- 外键约束
             );
         """)
         self.execute(
             "Create Unique Index Chapter_I on Chapters(BookId,ChapterId);")
-        self.commit()
 
     def insert_chapters(self, chapters: list[Chapter]) -> None:
         chapters_tuple_list = [i.to_tuple() for i in chapters]
@@ -300,7 +306,7 @@ class Database(Loggable):
         self.execute(
             "Update Books Set Title=?,Author=?,Description=?,Style=?,Cover=?,CoverFormat=?,ChapterCount=?,Source=?,Spider=?,Status=?,PublishDate=?,UpdateDate=? Where Id == ?;",
             (book.title, book.author, book.desc, book.style, book.cover,
-             book.cover_format, book.chapter_count, book.source, book.spider, book.status, book.publish, book.update, book.idx)
+             book.cover_format, book.chapter_count, book.source, book.spider, book.status, datetime.strftime(book.publish, "%Y-%m-%d"), datetime.strftime(book.update, "%Y-%m-%d"), book.idx)
         )
 
     def update_chapter(self, chapter: Chapter) -> None:
@@ -322,17 +328,15 @@ class Database(Loggable):
             删除书籍
         """
         self.check_book_exist(Id=book_index)
+        self.execute(
+            "Delete From Chapters Where BookId == ?;",
+            (book_index,)
+        )
 
-        with self.transaction:
-            self.execute(
-                "Delete From Chapters Where BookId == ?;",
-                (book_index,)
-            )
-
-            self.execute(
-                "Delete From Books Where Id==?;",
-                (book_index,)
-            )
+        self.execute(
+            "Delete From Books Where Id==?;",
+            (book_index,)
+        )
 
     def delete_chapter(self, book_index: int, chapter_index: int) -> None:
         """
