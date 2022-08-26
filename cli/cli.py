@@ -3,6 +3,7 @@ from inspect import isfunction
 from sys import version as python_version
 import subprocess
 import logging
+import shlex
 
 
 from .version import VERSION
@@ -57,9 +58,7 @@ def cli_main(manager: Manager):
 
     while True:
         try:
-            command = input("> ").split(" ")
-            if " " in command:
-                command.remove(" ")
+            command = shlex.split(input("> "))
 
             if len(command) == 0:
                 continue
