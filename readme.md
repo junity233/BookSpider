@@ -33,3 +33,16 @@ BookSpider主要分为以下模块：
 1. Spider:负责信息的采集。用户可以通过继承Spider基类来实现自己的Spider。
 2. Database:负责数据库访问
 3. Manager:负责任务调度
+
+## 三.Features & Todo
+
+### 1.Features
+
+* 数据库管理
+* 命令行操作
+
+### 2.Todo
+
+* [ ] 优化commands里的命令
+* [ ] 使用proxy_provider提供的代理
+* [ ] 支持Epub导出
