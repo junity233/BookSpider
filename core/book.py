@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import date, datetime
+from .utils import convert_url, str_to_date
 
 
 class Chapter:
@@ -33,20 +34,71 @@ class Chapter:
 
 
 class Book:
-    idx: int  # 书籍编号
+    _idx: int  # 书籍编号
     title: str  # 书籍标题
     author: str  # 作者
     chapter_count: int  # 章节数
-    source: str  # 来源Url
+    _source: str  # 来源Url
     spider: str  # 来源Spider
     desc: str  # 简介
     style: str  # 风格（玄幻/修仙...）
     cover: bytes  # 封面图
     cover_format: str  # 封面图格式
     status: bool  # 是否完结
-    update: datetime  # 更新时间
-    publish: datetime  # 发布时间
+    _update: date  # 更新时间
+    _publish: date  # 发布时间
     chapters: list[Chapter]  # 章节列表
+
+    @property
+    def update(self):
+        return self._update
+
+    @update.setter
+    def update(self, upd):
+        if isinstance(upd, str):
+            self._update = str_to_date(upd)
+        elif isinstance(upd, datetime):
+            self._update = upd
+        elif isinstance(upd, date):
+            self._update = datetime(upd.year, upd.month, upd.day)
+        else:
+            raise ValueError(f"Unrecognized type of date:{upd}")
+
+    @property
+    def publish(self):
+        return self._update
+
+    @update.setter
+    def publish(self, pub):
+        if isinstance(pub, str):
+            self._publish = str_to_date(pub)
+        elif isinstance(pub, datetime):
+            self._publish = pub
+        elif isinstance(pub, date):
+            self._publish = datetime(pub.year, pub.month, pub.day)
+        else:
+            raise ValueError(f"Unrecognized type of date:{pub}")
+
+    @property
+    def idx(self):
+        return self._idx
+
+    @idx.setter
+    def idx(self, v):
+        self._idx = v
+        self.update_book_index_to_chapters()
+
+    @property
+    def source(self):
+        return self._source
+
+    @source.setter
+    def source(self, s):
+        self._source = convert_url(s)
+
+    @property
+    def whole_url(self):
+        return 'https://'+self.source
 
     def __init__(self, title="", author="", source="", spider="", desc="", style="", idx=-1, chapter_count=0, cover=None, cover_format=None, status=True, update=datetime(1970, 1, 1), publish=datetime(1970, 1, 1)) -> None:
         self.title = title
@@ -58,9 +110,9 @@ class Book:
         self.publish = publish
         self.cover = cover
         self.cover_format = cover_format
+        self.chapters = []
         self.idx = idx
         self.chapter_count = chapter_count
-        self.chapters = []
         self.status = status
         self.spider = spider
         pass
@@ -95,8 +147,8 @@ class Book:
             source=data[8],
             spider=data[9],
             status=bool(data[10]),
-            publish=datetime.strptime(data[11], "%Y-%m-%d"),
-            update=datetime.strptime(data[12], "%Y-%m-%d")
+            publish=data[11],
+            update=data[12]
         )
 
     def add_chapter(self, title, content, idx=-1) -> Chapter:

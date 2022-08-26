@@ -1,11 +1,10 @@
-from ast import Dict
 import re
 from typing import Any, Iterable, Union
 import requests
 from lxml import etree
-import json
 from datetime import date, datetime
 import mimetypes
+import urllib3.exceptions
 
 from .book import Book, Chapter
 from .setting import SettingAccessable, SettingManager
@@ -28,7 +27,7 @@ class Spider(SettingAccessable, Loggable):
         self.user_agent = self.get_setting(
             "user_agent", r"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36")
 
-    def get(self, url, params={}, headers: dict[str, str] = {}, **kparams) -> requests.Response:
+    def get(self, url: str, params={}, headers: dict[str, str] = {}, **kparams) -> requests.Response:
         """
             发送Get请求,会重试直到成功获取
         """
@@ -45,7 +44,12 @@ class Spider(SettingAccessable, Loggable):
                 res = requests.get(url=url, headers=headers,
                                    params=params, timeout=Spider.timeout)
             except requests.Timeout:
-                pass
+                continue
+            except requests.ConnectionError as e:
+                if isinstance(e.args[0], urllib3.exceptions.MaxRetryError):
+                    continue
+
+                raise e
             else:
                 break
 
@@ -62,7 +66,7 @@ class Spider(SettingAccessable, Loggable):
         img = self.get(url)
         return img.content, mimetypes.guess_extension(img.headers["Content-Type"])
 
-    @staticmethod
+    @ staticmethod
     def get_ele_content(ele: etree._Element) -> str:
         res = ""
         if ele.text:
@@ -76,7 +80,7 @@ class Spider(SettingAccessable, Loggable):
 
         return res
 
-    @staticmethod
+    @ staticmethod
     def match_date(s: str):
         res = re.search(r"(\d{2,4})(\-|\/|.)(\d{1,2})\2(\d{1,2})", s)
         if res:
@@ -137,9 +141,9 @@ class Spider(SettingAccessable, Loggable):
             self.check_url
         )
 
-    def get_book_info(self, book: Book, url: str, **params) -> tuple[Book, Any]:
+    def get_book_info(self, book: Book,  **params) -> tuple[Book, Any]:
         """
-            获取书籍信息，返回一个元组。
+            获取书籍信息，返回一个元组。书籍的Url可以通过 `book.whole_url`获取。
             元组第一项是一个 `Book` ，表示书籍信息。
             第二项是一个任意类型，会被转发给 `get_book_menu`
         """

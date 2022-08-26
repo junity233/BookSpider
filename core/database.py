@@ -142,7 +142,7 @@ class Database(Loggable):
                         Cover        Blob                                          Default Null        , -- 封面
                         CoverFormat  Text                                          Default Null        , -- 封面格式
                         ChapterCount int                               Not Null                        , -- 章节数
-                        Source       Text     Unique                   Not Null                        , -- 来源网址
+                        Source       Text     Unique                   Not Null                        , -- 来源网址 格式: hostname+path,path不得以'/'结尾
                         Spider       Text                              Not NUll                        , -- 来源Spider
                         Status       int                                           Default 1           , -- 是否完结(1->完结 0->未完结)
                         PublishDate  Text                                          Default '0000-00-00', -- 发布日期 格式 %Y-%m-%d

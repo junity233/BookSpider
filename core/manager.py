@@ -1,7 +1,10 @@
 from datetime import datetime
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, Future
+import logging
 from threading import Lock
+from traceback import print_exception
+from urllib.parse import urlparse
 
 from .book import Book, Chapter
 from .setting import SettingAccessable, SettingManager
@@ -9,6 +12,7 @@ from .database import Database
 from .spider import Spider
 from .proxy_provider import ProxyProvider
 from .logger import Loggable
+from .utils import convert_url
 
 CONFIG_FILE_NAME = "config.json"
 
@@ -88,16 +92,20 @@ class Manager(Loggable, SettingAccessable):
         """
             使用给定的Spide获取书籍
         """
+        url = convert_url(url)
+
         book = Book(source=url, spider=spider.name)
 
-        _, menu_data = spider.get_book_info(book, url, **params)
+        _, menu_data = spider.get_book_info(book, **params)
 
         self.log_info(
             f"Book info : Title = '{book.title}',Author='{book.author}'")
 
+        book_exist = False
         # 若库中已存在并且是最新的，就跳过这本书，否则获取书籍id
         if self.db.is_book_exist(Source=url):
             book_info = self.db.query_book_info(Source=url)[0]
+            book_exist = True
             if book_info.update != datetime(1970, 1, 1) and book_info.update >= book.update:
                 self.log_info(f"Book {book_info.title} is already latest.")
                 return book_info
@@ -105,19 +113,25 @@ class Manager(Loggable, SettingAccessable):
         menu = spider.get_book_menu(menu_data, **params)
         self.log_info(f"Get chapter info successfully.")
 
-        def get_chapter_content_callback(task: Future, chapter: Chapter):
-            exception = task.exception()
-            if exception:
-                self.log_error(
-                    f"Get chapter {chapter.title} failed:{exception}")
+        failed_chapters = []
+        failed_lock = Lock()
 
         chapter_list = []
         chapter_count = 0
 
+        def get_chapter_content_callback(task: Future, chapter: Chapter, chapter_data):
+            exception = task.exception()
+            if exception:
+                self.log_error(
+                    f"Get chapter {chapter.title} failed:{exception}")
+                with failed_lock:
+                    failed_chapters.append((chapter, chapter_data))
+
         with self.get_thread_pool() as thread_pool:
+
             for idx, chapter_data in menu:
                 chapter_count += 1
-                if idx < book_info.chapter_count:
+                if book_exist and idx < book_info.chapter_count:
                     continue
                 chapter = book.make_chapter(idx)
                 chapter_list.append(chapter)
@@ -125,7 +139,18 @@ class Manager(Loggable, SettingAccessable):
                 task = thread_pool.submit(spider.get_chapter_content,
                                           chapter, chapter_data, **params)
                 task.add_done_callback(
-                    partial(get_chapter_content_callback, chapter=chapter))
+                    partial(get_chapter_content_callback, chapter=chapter, chapter_data=chapter_data))
+
+        while len(failed_chapters) > 0:
+            t = failed_chapters
+            failed_chapters = []
+
+            with self.get_thread_pool() as thread_pool:
+                for chapter, chapter_data in t:
+                    task = thread_pool.submit(
+                        spider.get_chapter_content, chapter, chapter_data, **params)
+                    task.add_done_callback(partial(
+                        get_chapter_content_callback, chapter=chapter, chapter_data=chapter_data))
 
         chapter_list.sort()
         book.chapters = chapter_list
@@ -172,6 +197,7 @@ class Manager(Loggable, SettingAccessable):
             except Exception as e:
                 self.log_error(
                     f"Get book '{book.title}' source='{book.source}' error:{e}")
+                logging.exception(e)
             else:
                 res.append(t)
 

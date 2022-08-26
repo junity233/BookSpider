@@ -15,8 +15,8 @@ class BQGSpider(Spider):
     def check_url(self, url: str, **params) -> bool:
         return url.startswith('https://www.xbiquge.so/') or url.startswith('http://www.xbiquge.so/')
 
-    def get_book_info(self, book: Book, url: str, **params) -> tuple[Book, Any]:
-        html = self.get_html(url)
+    def get_book_info(self, book: Book, **params) -> tuple[Book, Any]:
+        html = self.get_html(book.whole_url)
         book.title = html.xpath(r'//*[@id="info"]/h1/text()')[0]
         book.author = html.xpath(r'//*[@id="info"]/p[1]/a/text()')[0]
         book.desc = Spider.get_ele_content(html.xpath(r'//*[@id="intro"]')[0])
@@ -43,7 +43,7 @@ class BQGSpider(Spider):
             a = a[0]
 
             chapter_title = a.text
-            chapter_url = urljoin(url, a.attrib["href"])
+            chapter_url = urljoin(book.whole_url+'/', a.attrib["href"])
             chapters.append((chapter_title, chapter_url, cnt))
             cnt += 1
 
