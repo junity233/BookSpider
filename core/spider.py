@@ -154,7 +154,12 @@ class Spider(SettingAccessable, Loggable):
             except UnicodeDecodeError:
                 pass
 
-        return str(content, encoding=detect_encoding, errors="replace")
+        if detect_encoding:
+            return str(content, encoding=detect_encoding, errors="replace")
+        elif res.get_encoding():
+            return str(content, encoding=res.get_encoding(), errors="replace")
+        else:
+            return str(content, encoding='utf-8', errors="replace")
 
     async def async_get_html(self, url, params: dict[str, str] = {}, headers: dict[str, str] = {}, encoding=None, **kparams) -> etree.Element:
         """
@@ -172,6 +177,10 @@ class Spider(SettingAccessable, Loggable):
             try:
                 content = await img.read()
             except asyncio.exceptions.TimeoutError:
+                continue
+            except aiohttp.client_exceptions.ClientConnectionError as e:
+                if e.args[0]=="Connection closed":
+                    img=await self.async_get(url)
                 continue
             else:
                 return content, mimetypes.guess_extension(img.headers["Content-Type"])
@@ -252,7 +261,12 @@ class Spider(SettingAccessable, Loggable):
             except UnicodeDecodeError:
                 pass
 
-        return str(content, encoding=detect_encoding, errors="replace")
+        if detect_encoding:
+            return str(content, encoding=detect_encoding, errors="replace")
+        elif res.encoding:
+            return str(content, encoding=res.encoding, errors="replace")
+        else:
+            return str(content, encoding='utf-8', errors="replace")
 
     def get_html(self, url: str, params={}, headers: dict[str, str] = {}, encoding=None, **kparams) -> etree._Element:
         return etree.HTML(self.get_text(url, params, headers, encoding, **kparams))
