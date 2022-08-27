@@ -38,7 +38,7 @@ class Manager(Loggable, SettingAccessable):
     spiders: dict[str, Spider]
     proxy_providers: dict[str, ProxyProvider]
 
-    max_threads_count: int
+    max_retry: int
 
     def __init__(self) -> None:
         self.setting_manager = SettingManager(CONFIG_FILE_NAME)
@@ -46,7 +46,7 @@ class Manager(Loggable, SettingAccessable):
 
         self.spiders = {}
         self.proxy_providers = {}
-        self.max_threads_count = self.get_setting("max_threads_count", 5)
+        self.max_retry = self.get_setting("max_retry", 5)
         self.init_loaded_spiders()
 
         self.db = Database()
@@ -83,6 +83,10 @@ class Manager(Loggable, SettingAccessable):
         if book_info[0].update < book.update or book.update == datetime(1970, 1, 1):
             return True
         return False
+
+    def update_setting(self, key: str, value) -> None:
+        if key == "max_retry":
+            self.max_retry = value
 
     def update_book(self, book: Book) -> None:
         """
@@ -202,18 +206,21 @@ class Manager(Loggable, SettingAccessable):
     def get_all_book(self, spider: Spider, **params) -> list[int]:
         res = []
         for book in spider.get_all_book(**params):
-            try:
-                if self.is_book_need_update(book):
-                    t = self.get_book(book.source, spider, **params)
+            for _ in range(self.max_retry):
+                try:
+                    if self.is_book_need_update(book):
+                        t = self.get_book(book.source, spider, **params)
+                    else:
+                        self.log_info(
+                            f"Book '{book.title}' is already the lastest.")
+                except Exception as e:
+                    self.log_error(
+                        f"Get book '{book.title}' source='{book.source}' error:{e}")
+                    logging.exception(e)
+                    continue
                 else:
-                    self.log_info(
-                        f"Book '{book.title}' is already the lastest.")
-            except Exception as e:
-                self.log_error(
-                    f"Get book '{book.title}' source='{book.source}' error:{e}")
-                logging.exception(e)
-            else:
-                res.append(t.idx)
+                    res.append(t.idx)
+                    break
 
         return res
 

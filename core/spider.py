@@ -36,6 +36,17 @@ class MaxRetriesError(Exception):
         return f"Exceeded maximum number of retries:{self.method} {self.url}"
 
 
+class UnknownCodecError(Exception):
+    data: bytes
+
+    def __init__(self, data, *args: object) -> None:
+        super().__init__(data, *args)
+        self.data = data
+
+    def __str__(self) -> str:
+        return "Cannot find a codec for data!"
+
+
 class Spider(SettingAccessable, Loggable):
     cookie: str
     name: str
@@ -75,6 +86,9 @@ class Spider(SettingAccessable, Loggable):
         if self.session == None:
             self.session = self.create_session()
 
+        if self.session.closed:
+            self.session = self.create_session()
+
         for _ in range(self.max_retry):
             try:
                 async with self.semaphore:
@@ -84,10 +98,14 @@ class Spider(SettingAccessable, Loggable):
                     else:
                         async with self.create_session() as session:
                             return await session.get(url=url, headers=headers, params=params)
+            except aiohttp.client_exceptions.ClientConnectionError as e:
+                if e.args[0] == "Connection closed":
+                    self.session = self.create_session()
+                continue
             except:
                 continue
 
-        raise MaxRetriesError("GET", url, params, headers)
+        raise MaxRetriesError("Get", url, params, headers)
 
     def __del__(self):
         self.close()
@@ -96,30 +114,69 @@ class Spider(SettingAccessable, Loggable):
         if self.session:
             get_async_result(self.session.close())
 
-    async def async_get_html(self, url, params: dict[str, str] = {}, headers: dict[str, str] = {}, **kparams) -> etree.Element:
+    async def async_get_text(self, url, params: dict[str, str] = {}, headers: dict[str, str] = {}, encoding=None, **kparams) -> str:
         """
-            使用self.get获取网页并用 `etree.HTML` 解析
+            获取网页内容并解码.
+            当解码失败时,会对编码进行猜测,若所有猜测都失败,使用str(errors="replace")
         """
         res = await self.async_get(url, headers, params, **kparams)
+        for i in range(self.max_retry):
+            try:
+                return await res.text()
+            except UnicodeDecodeError:
+                break
+            except asyncio.exceptions.TimeoutError:
+                continue
+            except aiohttp.client_exceptions.ClientConnectionError as e:
+                if e.args[0] == "Connection closed":
+                    res = await self.async_get(url, headers, params, **kparams)
+                    continue
         content: bytes = None
-        for _ in range(self.max_retry):
+
+        for i in range(self.max_retry):
             try:
                 content = await res.read()
             except:
                 continue
-            else:
-                encoding = cchardet.detect(content)["encoding"]
-                text = content.decode(encoding=encoding)
+            break
+        else:
+            raise MaxRetriesError("GetText", url, params, headers)
 
-                return etree.HTML(text)
-        raise MaxRetriesError("GetHTML", url, params, headers)
+        detect_encoding = cchardet.detect(content)["encoding"]
+        probably_charsets = [
+            encoding, detect_encoding, "utf-8", "gbk", "gb2312"]
+
+        for i in probably_charsets:
+            if i == None:
+                continue
+            try:
+                return content.decode(i)
+            except UnicodeDecodeError:
+                pass
+
+        return str(content, encoding=detect_encoding, errors="replace")
+
+    async def async_get_html(self, url, params: dict[str, str] = {}, headers: dict[str, str] = {}, encoding=None, **kparams) -> etree.Element:
+        """
+            使用self.get_text获取网页并用 `etree.HTML` 解析
+        """
+        return etree.HTML(await self.async_get_text(url, params, headers, encoding, **kparams))
 
     async def async_get_image(self, url) -> tuple[bytes, str]:
         """
             下载图片,返回图片内容和拓展名(根据mimetype猜测)
         """
         img = await self.async_get(url)
-        return await img.read(), mimetypes.guess_extension(img.headers["Content-Type"])
+        content: bytes = None
+        for _ in range(self.max_retry):
+            try:
+                content = await img.read()
+            except asyncio.exceptions.TimeoutError:
+                continue
+            else:
+                return content, mimetypes.guess_extension(img.headers["Content-Type"])
+
+        raise MaxRetriesError("GetImage", url, None, None)
 
     async def async_post(self, url, params: dict = {}, headers: dict = {}, use_session=True, **kparams) -> requests.Response:
         """
@@ -135,6 +192,9 @@ class Spider(SettingAccessable, Loggable):
         if self.session == None:
             self.session = self.create_session()
 
+        if self.session.closed:
+            self.session = self.create_session()
+
         for _ in range(self.max_retry):
             try:
                 async with self.semaphore:
@@ -146,8 +206,12 @@ class Spider(SettingAccessable, Loggable):
                             return await session.post(url=url, headers=headers, params=params)
             except aiohttp.ServerTimeoutError:
                 continue
+            except aiohttp.client_exceptions.ClientConnectionError as e:
+                if e.args[0] == "Connection closed":
+                    self.session = self.create_session()
+                    continue
 
-        raise MaxRetriesError("POST", url, params, headers)
+        raise MaxRetriesError("Post", url, params, headers)
 
     def get(self, url: str, params={}, headers: dict[str, str] = {}, **kparams):
         """
@@ -167,16 +231,31 @@ class Spider(SettingAccessable, Loggable):
 
         raise MaxRetriesError("GET", url, params, headers)
 
-    def get_html(self, url: str, params={}, headers: dict[str, str] = {}, **kparams):
-        res = self.get(url, params, headers, **kparams)
-        text = ""
-        if res.encoding == None:
-            encoding = cchardet.detect(res.content)["encoding"]
-            text = res.content.decode(encoding)
-        else:
-            text = res.text
+    def get_text(self, url: str, params={}, headers: dict[str, str] = {}, encoding=None, **kparams) -> str:
+        res = self.get(url, headers, params, **kparams)
 
-        return etree.HTML(text)
+        try:
+            return res.text
+        except UnicodeDecodeError:
+            pass
+        content: bytes = res.content
+
+        detect_encoding = cchardet.detect(content)["encoding"]
+        probably_charsets = [
+            encoding, detect_encoding, "utf-8", "gbk", "gb2312"]
+
+        for i in probably_charsets:
+            if i == None:
+                continue
+            try:
+                return content.decode(i)
+            except UnicodeDecodeError:
+                pass
+
+        return str(content, encoding=detect_encoding, errors="replace")
+
+    def get_html(self, url: str, params={}, headers: dict[str, str] = {}, encoding=None, **kparams) -> etree._Element:
+        return etree.HTML(self.get_text(url, params, headers, encoding, **kparams))
 
     def get_image(self, url: str, params={}, headers: dict[str, str] = {}, **kparams) -> tuple[bytes, str]:
         res = self.get(url, params, headers).content
