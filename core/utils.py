@@ -1,5 +1,6 @@
 from urllib.parse import urlparse
 from datetime import datetime
+import asyncio
 
 
 def convert_url(url):
@@ -26,3 +27,8 @@ def str_to_date(s):
         except ValueError:
             continue
     raise ValueError(f"{s} is not a date!")
+
+
+def get_async_result(future):
+    loop = asyncio.get_event_loop()
+    return loop.run_until_complete(future)

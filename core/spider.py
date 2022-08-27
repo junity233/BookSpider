@@ -1,10 +1,15 @@
 import re
+from time import sleep
 from typing import Any, Iterable, Union
 import requests
 from lxml import etree
 from datetime import date, datetime
 import mimetypes
 import urllib3.exceptions
+import cchardet
+import aiohttp
+import aiohttp.client_exceptions
+import asyncio
 
 from .book import Book, Chapter
 from .setting import SettingAccessable, SettingManager
@@ -12,12 +17,33 @@ from .logger import Loggable
 from .exceptions import *
 
 
+class MaxRetriesError(Exception):
+    url: str
+    params: dict[str, str]
+    headers: dict[str, str]
+    method: str
+
+    def __init__(self, method, url, params, headers) -> None:
+        self.url = url
+        self.params = params
+        self.headers = headers
+        self.method = method
+
+        Exception.__init__(self, method, url, params, headers)
+
+    def __str__(self) -> str:
+        return f"Exceeded maximum number of retries:{self.method} {self.url}"
+
+
 class Spider(SettingAccessable, Loggable):
     cookie: str
     name: str
+    session: aiohttp.ClientSession
 
     user_agent: str
-    timeout: int = 5
+    timeout: int
+    max_retry: int
+    semaphore: asyncio.Semaphore
 
     def __init__(self, setting_manager: SettingManager, field="", name="") -> None:
         if name == "":
@@ -26,8 +52,15 @@ class Spider(SettingAccessable, Loggable):
         self.cookie = self.get_setting("cookie", "")
         self.user_agent = self.get_setting(
             "user_agent", r"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36")
+        self.session = None
+        self.max_retry = self.get_setting("max_retry", 10)
+        self.timeout = self.get_setting("timeout", 5)
+        self.semaphore = asyncio.Semaphore(100)
 
-    def get(self, url: str, params={}, headers: dict[str, str] = {}, **kparams) -> requests.Response:
+    def create_session(self):
+        return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout))
+
+    async def get(self, url: str, params={}, headers: dict[str, str] = {}, use_session=True, **kparams):
         """
             发送Get请求,会重试直到成功获取
         """
@@ -38,33 +71,50 @@ class Spider(SettingAccessable, Loggable):
 
         params.update(kparams)
 
-        res = None
-        while True:
+        if self.session == None:
+            self.session = self.create_session()
+
+        for _ in range(self.max_retry):
             try:
-                res = requests.get(url=url, headers=headers,
-                                   params=params, timeout=Spider.timeout)
-            except requests.Timeout:
+                async with self.semaphore:
+                    if use_session:
+                        return await self.session.get(url=url, headers=headers,
+                                                      params=params)
+                    else:
+                        async with self.create_session() as session:
+                            return await session.get(url=url, headers=headers, params=params)
+            except:
                 continue
-            except requests.ConnectionError as e:
-                if isinstance(e.args[0], urllib3.exceptions.MaxRetryError):
-                    continue
 
-                raise e
-            else:
-                break
+        raise MaxRetriesError("GET", url, params, headers)
 
-        return res
+    def __del__(self):
+        self.close()
 
-    def get_html(self, url, params: dict[str, str] = {}, headers: dict[str, str] = {}, **kparams) -> etree.Element:
+    def close(self):
+        self.session.close()
+
+    async def get_html(self, url, params: dict[str, str] = {}, headers: dict[str, str] = {}, **kparams) -> etree.Element:
         """
             使用self.get获取网页并用 `etree.HTML` 解析
         """
-        res = self.get(url, headers, params, **kparams)
-        return etree.HTML(res.text)
+        res = await self.get(url, headers, params, **kparams)
+        content: bytes = None
+        for _ in range(self.max_retry):
+            try:
+                content = await res.read()
+            except:
+                continue
+            else:
+                encoding = cchardet.detect(content)["encoding"]
+                text = content.decode(encoding=encoding)
 
-    def get_image(self, url):
-        img = self.get(url)
-        return img.content, mimetypes.guess_extension(img.headers["Content-Type"])
+                return etree.HTML(text)
+        raise MaxRetriesError("GetHTML", url, params, headers)
+
+    async def get_image(self, url):
+        img = await self.get(url)
+        return await img.read(), mimetypes.guess_extension(img.headers["Content-Type"])
 
     @ staticmethod
     def get_ele_content(ele: etree._Element) -> str:
@@ -94,7 +144,7 @@ class Spider(SettingAccessable, Loggable):
         else:
             return datetime(1970, 1, 1)
 
-    def post(self, url, params: dict = {}, headers: dict = {}, **kparams) -> requests.Response:
+    async def post(self, url, params: dict = {}, headers: dict = {}, use_session=True, **kparams) -> requests.Response:
         """
             发送Post请求,会重复发送直到成功
         """
@@ -105,17 +155,22 @@ class Spider(SettingAccessable, Loggable):
 
         params.update(kparams)
 
-        res = None
-        while True:
-            try:
-                res = requests.post(url=url, headers=headers,
-                                    data=params, timeout=Spider.timeout)
-            except requests.Timeout:
-                pass
-            else:
-                break
+        if self.session == None:
+            self.session = self.create_session()
 
-        return res
+        for _ in range(self.max_retry):
+            try:
+                async with self.semaphore:
+                    if use_session:
+                        return await self.session.post(url=url, headers=headers,
+                                                       params=params)
+                    else:
+                        async with self.create_session() as session:
+                            return await session.post(url=url, headers=headers, params=params)
+            except aiohttp.ServerTimeoutError:
+                continue
+
+        raise MaxRetriesError("POST", url, params, headers)
 
     def update_setting(self, key: str, value: Any) -> None:
         if key == "cookie":
@@ -141,7 +196,7 @@ class Spider(SettingAccessable, Loggable):
             self.check_url
         )
 
-    def get_book_info(self, book: Book,  **params) -> tuple[Book, Any]:
+    async def get_book_info(self, book: Book,  **params) -> tuple[Book, Any]:
         """
             获取书籍信息，返回一个元组。书籍的Url可以通过 `book.whole_url`获取。
             元组第一项是一个 `Book` ，表示书籍信息。
@@ -152,7 +207,7 @@ class Spider(SettingAccessable, Loggable):
             self.get_book_info
         )
 
-    def get_book_menu(self, data: Any, **params) -> Iterable[tuple[int, Any]]:
+    async def get_book_menu(self, data: Any, **params) -> Iterable[tuple[int, Any]]:
         """
             使用 `get_book_info` 返回的信息获取书籍目录。
             返回的目录信息应是一个可以迭代的对象，每次迭代返回一个元组，包含章节序号和信息。
@@ -163,18 +218,20 @@ class Spider(SettingAccessable, Loggable):
             self.get_book_menu
         )
 
-    def get_chapter_content(self, chapter: Chapter, data: Any, **params) -> Chapter:
+    async def get_chapter_content(self, chapter: Chapter, data: Any, **params) -> Chapter:
         """
             使用给定的章节信息来获取章节内容。
             获取到的内容应填充到 `chapter` 中。
-            返回值就是这个 `chapter`
+            返回值就是这个 `chapter`。
+
+            注意，这是一个异步方法
         """
         raise NonimplentException(
             self.__class__,
             self.get_chapter_content
         )
 
-    def search_book(self, keyword: str, author="", style="", **params) -> Iterable[Book]:
+    async def search_book(self, keyword: str, author="", style="", **params) -> Iterable[Book]:
         """
             使用给定的信息查询书籍。
         """
@@ -183,7 +240,7 @@ class Spider(SettingAccessable, Loggable):
             self.search_book
         )
 
-    def get_all_book(self, **param) -> Iterable[Book]:
+    async def get_all_book(self, **param) -> Iterable[Book]:
         """
             获取所有的书籍列表,只需要书籍的title与source
         """

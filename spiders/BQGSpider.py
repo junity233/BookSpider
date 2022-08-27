@@ -15,12 +15,12 @@ class BQGSpider(Spider):
     def check_url(self, url: str, **params) -> bool:
         return url.startswith('https://www.xbiquge.so/') or url.startswith('http://www.xbiquge.so/')
 
-    def get_book_info(self, book: Book, **params) -> tuple[Book, Any]:
-        html = self.get_html(book.whole_url)
+    async def get_book_info(self, book: Book, **params) -> tuple[Book, Any]:
+        html = await self.get_html(book.whole_url)
         book.title = html.xpath(r'//*[@id="info"]/h1/text()')[0]
         book.author = html.xpath(r'//*[@id="info"]/p[1]/a/text()')[0]
         book.desc = Spider.get_ele_content(html.xpath(r'//*[@id="intro"]')[0])
-        book.cover, book.cover_format = self.get_image(
+        book.cover, book.cover_format = await self.get_image(
             html.xpath(r'//*[@id="fmimg"]/img/@src')[0])
         book.update = Spider.match_date(
             html.xpath(r'//*[@id="info"]/p[3]/text()')[0])
@@ -49,14 +49,13 @@ class BQGSpider(Spider):
 
         return book, chapters
 
-    def get_book_menu(self, data: list[tuple[str, str, int]], **params) -> Iterable[tuple[int, Any]]:
-        for i in data:
-            yield i[2], i
+    async def get_book_menu(self, data: list[tuple[str, str, int]], **params) -> Iterable[tuple[int, Any]]:
+        return [(i[2], i) for i in data]
 
-    def get_chapter_content(self, chapter: Chapter, data: Any, silent=False, **params) -> Chapter:
+    async def get_chapter_content(self, chapter: Chapter, data: Any, silent=False, **params) -> Chapter:
         chapter.title = data[0]
 
-        html = self.get_html(data[1])
+        html = await self.get_html(data[1])
 
         content = html.xpath(r'//*[@id="content"]')[0]
         content.text = ""
@@ -68,12 +67,20 @@ class BQGSpider(Spider):
 
         return chapter
 
-    def get_all_book(self, **param) -> Iterable[Book]:
-        html = self.get_html(r'https://www.xbiquge.so/top/allvisit/1.html')
+    async def get_all_book(self, start=1, end=-1, **param) -> Iterable[Book]:
+        html = await self.get_html(r'https://www.xbiquge.so/top/allvisit/1.html')
         pagenum = int(html.xpath(
             r'//*[@id="pagestats"]//text()')[0].split('/')[1])
 
-        for i in range(1, pagenum+1):
+        if start != 1:
+            start = int(start)
+
+        if end != -1:
+            end = int(end)
+        else:
+            end = pagenum
+
+        for i in range(start, end+1):
             html = self.get_html(
                 f'https://www.xbiquge.so/top/allvisit/{i}.html')
             lis = html.xpath(r'//*[@id="main"]/div[1]/li')

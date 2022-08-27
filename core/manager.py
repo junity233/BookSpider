@@ -1,10 +1,12 @@
 from datetime import datetime
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, Future
+from genericpath import isdir
 import logging
+import re
 from threading import Lock
-from traceback import print_exception
-from urllib.parse import urlparse
+from os import path
+import importlib
 
 from .book import Book, Chapter
 from .setting import SettingAccessable, SettingManager
@@ -12,7 +14,7 @@ from .database import Database
 from .spider import Spider
 from .proxy_provider import ProxyProvider
 from .logger import Loggable
-from .utils import convert_url
+from .utils import *
 
 CONFIG_FILE_NAME = "config.json"
 
@@ -49,6 +51,11 @@ class Manager(Loggable, SettingAccessable):
         self.db = Database()
         self.db.open(self.get_setting("database", "books.db"))
 
+    def close(self) -> None:
+        for spider in self.spiders:
+            spider.close()
+        self.db.close()
+
     def get_spider(self, name: str) -> Spider:
         if name not in self.spiders.keys():
             raise SpiderNotFoundError(name)
@@ -67,6 +74,14 @@ class Manager(Loggable, SettingAccessable):
 
     def get_thread_pool(self) -> ThreadPoolExecutor:
         return ThreadPoolExecutor(max_workers=self.max_threads_count)
+
+    def is_book_need_update(self, book: Book) -> bool:
+        book_info = self.db.query_book_info(Source=book.source)
+        if len(book_info) == 0:
+            return True
+        if book_info[0].update < book.update or book.update == datetime(1970, 1, 1):
+            return True
+        return False
 
     def update_book(self, book: Book) -> None:
         """
@@ -96,7 +111,7 @@ class Manager(Loggable, SettingAccessable):
 
         book = Book(source=url, spider=spider.name)
 
-        _, menu_data = spider.get_book_info(book, **params)
+        _, menu_data = get_async_result(spider.get_book_info(book, **params))
 
         self.log_info(
             f"Book info : Title = '{book.title}',Author='{book.author}'")
@@ -107,50 +122,48 @@ class Manager(Loggable, SettingAccessable):
             book_info = self.db.query_book_info(Source=url)[0]
             book_exist = True
             if book_info.update != datetime(1970, 1, 1) and book_info.update >= book.update:
-                self.log_info(f"Book {book_info.title} is already latest.")
+                self.log_info(f"Book {book_info.title} is already the latest.")
                 return book_info
+            book.idx = book_info.idx
 
-        menu = spider.get_book_menu(menu_data, **params)
+        menu = get_async_result(spider.get_book_menu(menu_data, **params))
         self.log_info(f"Get chapter info successfully.")
 
         failed_chapters = []
-        failed_lock = Lock()
-
         chapter_list = []
         chapter_count = 0
+        loop = asyncio.get_event_loop()
+        tasks = []
 
-        def get_chapter_content_callback(task: Future, chapter: Chapter, chapter_data):
-            exception = task.exception()
-            if exception:
-                self.log_error(
-                    f"Get chapter {chapter.title} failed:{exception}")
-                with failed_lock:
-                    failed_chapters.append((chapter, chapter_data))
+        async def get_chapter_content_warpper(chapter: Chapter, chapter_data):
+            # 使用这个warpper来捕获异常
+            try:
+                return await spider.get_chapter_content(chapter, chapter_data, **params)
+            except Exception as e:
+                self.log_error(f"Get chapter '{chapter.title}' error:{e}")
+                logging.exception(e)
+                failed_chapters.append((chapter, chapter_data))
 
-        with self.get_thread_pool() as thread_pool:
+        for idx, chapter_data in menu:
+            chapter_count += 1
+            if book_exist and idx < book_info.chapter_count:
+                continue
+            chapter = book.make_chapter(idx)
+            chapter_list.append(chapter)
 
-            for idx, chapter_data in menu:
-                chapter_count += 1
-                if book_exist and idx < book_info.chapter_count:
-                    continue
-                chapter = book.make_chapter(idx)
-                chapter_list.append(chapter)
+            tasks.append(get_chapter_content_warpper(chapter, chapter_data))
 
-                task = thread_pool.submit(spider.get_chapter_content,
-                                          chapter, chapter_data, **params)
-                task.add_done_callback(
-                    partial(get_chapter_content_callback, chapter=chapter, chapter_data=chapter_data))
+        loop.run_until_complete(asyncio.gather(*tasks))
 
         while len(failed_chapters) > 0:
             t = failed_chapters
             failed_chapters = []
+            tasks = []
 
-            with self.get_thread_pool() as thread_pool:
-                for chapter, chapter_data in t:
-                    task = thread_pool.submit(
-                        spider.get_chapter_content, chapter, chapter_data, **params)
-                    task.add_done_callback(partial(
-                        get_chapter_content_callback, chapter=chapter, chapter_data=chapter_data))
+            for chapter, chapter_data in t:
+                tasks.append(get_chapter_content_warpper(
+                    chapter, chapter_data))
+            loop.run_until_complete(asyncio.gather(*tasks))
 
         chapter_list.sort()
         book.chapters = chapter_list
@@ -186,20 +199,23 @@ class Manager(Loggable, SettingAccessable):
         return book_list
 
     def get_all_book(self, spider: Spider, **params) -> list[Book]:
-        book_list = spider.get_all_book(**params)
+        book_list = get_async_result(spider.get_all_book(**params))
 
         res = []
-        lock = Lock()
 
         for book in book_list:
             try:
-                t = self.get_book(book.source, spider, **params)
+                if self.is_book_need_update(book):
+                    t = self.get_book(book.source, spider, **params)
+                else:
+                    self.log_info(
+                        f"Book '{book.title}' is already the lastest.")
             except Exception as e:
                 self.log_error(
                     f"Get book '{book.title}' source='{book.source}' error:{e}")
                 logging.exception(e)
             else:
-                res.append(t)
+                res.append(t.idx)
 
         return res
 
@@ -228,33 +244,50 @@ class Manager(Loggable, SettingAccessable):
             self.get_book(i.source, spider, **params)
         self.log_info("Check all books successfully")
 
-    def export_book(self, book_index: int, out_path="") -> None:
+    def export_book(self, book_info: Book, chapters: list[Chapter], out_path=path.curdir) -> None:
+        if path.isdir(out_path):
+            title = re.sub(r"[\/\\\:\*\?\"\<\>\|]", "_",
+                           book_info.title)  # 过滤不合法字符
+            out_path = path.join(out_path, title+".txt")
+
+        try:
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(book_info.title+"\n\n")
+                f.write(book_info.desc + "\n\n")
+
+                for chapter in chapters:
+                    f.write(chapter.title+"\n")
+                    f.write(chapter.content+"\n")
+
+            with open(out_path+book_info.cover_format, "wb") as f:
+                f.write(book_info.cover)
+        except FileNotFoundError:
+            self.log_error("Path not found")
+        else:
+            self.log_info(
+                f"Successfully export '{book_info.title}' to {out_path}")
+
+    def export_book_by_id(self, book_index: int, out_path=path.curdir) -> None:
         self.db.check_book_exist(Id=book_index)
         book_info = self.query_book(Id=book_index)[0]
         chapters = self.db.query_all_chapters(book_index)
 
-        if out_path == "":
-            out_path = book_info.title+".txt"
+        self.export_book(book_info, chapters, out_path)
 
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(book_info.title+"\n\n")
-            f.write(book_info.desc + "\n\n")
+    def export_all_book(self, out_path=path.curdir):
+        books = self.db.query_book_info()
 
-            for chapter in chapters:
-                f.write(chapter.title+"\n")
-                f.write(chapter.content+"\n")
-
-        with open(out_path+book_info.cover_format, "wb") as f:
-            f.write(book_info.cover)
+        for book in books:
+            chapters = self.db.query_all_chapters(book.idx)
+            self.export_book(book, chapters, out_path)
 
     def load_spider(self, name: str) -> None:
         spider: Spider = None
         if name in self.spiders.keys():
             return
         try:
-            env = {"setting_manager": self.setting_manager}
-            exec(f"from spiders.{name} import {name}", env)
-            spider = eval(f"{name}(setting_manager)", env)
+            spider_module = importlib.import_module(f".{name}", "spiders")
+            spider = spider_module.__dict__[name](self.setting_manager)
             if not isinstance(spider, Spider):
                 self.log_error("Spider must inherit from Spider class!")
 
