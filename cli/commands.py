@@ -124,11 +124,11 @@ def book(op: str, *params):
         kwargs = args_to_kwargs(*params)
 
         table = PrettyTable(
-            ["Id", "Title", "Author", "Status", "Publish Date", "Update Date"])
+            ["Id", "Title", "Author", "Chapter Count", "Style", "Status", "Publish Date", "Update Date"])
         cnt = 0
 
         for book in mgr.query_book(**kwargs):
-            table.add_row([book.idx, book.title, book.author,
+            table.add_row([book.idx, book.title, book.author, book.chapter_count, book.style,
                           "End" if book.status else "Not End", book.publish, book.update])
             cnt += 1
 
@@ -142,9 +142,15 @@ def book(op: str, *params):
             index = int(index)
             mgr.check_book(index, *params)
 
-    def export(index, outpath=""):
-        index = int(index)
-        mgr.export_book(index, outpath)
+    def export(index, outpath="."):
+        try:
+            index = int(index)
+            mgr.export_book_by_id(index, outpath)
+        except ValueError:
+            if index == "all":
+                mgr.export_all_book(outpath)
+            else:
+                logger.log_error("Invaild arguement")
 
     def remove(index):
         index = int(index)
@@ -153,17 +159,11 @@ def book(op: str, *params):
         if confirm == "Yes":
             mgr.delete_book(index)
 
-    def list_(cnt, offset):
-        cnt = int(cnt)
-        offset = int(offset)
-        search(Limit=cnt, Offset=offset)
-
     func_table = {
         "search": search,
         "check": check,
         "export": export,
-        "remove": remove,
-        "list": list_
+        "remove": remove
     }
 
     call_func_by_op(func_table, op, *params)
