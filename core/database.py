@@ -352,8 +352,13 @@ class Database(Loggable):
     @staticmethod
     def make_condition(**params):
         sql = "Where " if len(params) > 0 else ""
+        flag = False
 
         for k, v in params.items():
+            if flag:
+                sql += "and "
+            else:
+                flag = True
             if type(v) == type(""):
                 sql += f"{k} like '%{v}%' "
             elif type(v) == type(0):
