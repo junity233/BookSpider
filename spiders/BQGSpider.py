@@ -68,7 +68,7 @@ class BQGSpider(Spider):
         return chapter
 
     def get_all_book(self, start=1, end=-1, **param) -> Iterable[Book]:
-        html = self.get_html(r'https://www.xbiquge.so/top/allvisit/1.html')
+        html = self.get_html(r'https://www.xbiquge.so/top/toptime/1.html')
         pagenum = int(html.xpath(
             r'//*[@id="pagestats"]//text()')[0].split('/')[1])
 
@@ -82,8 +82,9 @@ class BQGSpider(Spider):
 
         for i in range(start, end+1):
             html = self.get_html(
-                f'https://www.xbiquge.so/top/allvisit/{i}.html')
+                f'https://www.xbiquge.so/top/toptime/{i}.html')
             lis = html.xpath(r'//*[@id="main"]/div[1]/li')
+            self.set_setting("max_page", i)
 
             for j in lis:
                 a = j.xpath('./span[@class="s2"]/a')[0]
