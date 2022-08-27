@@ -2,3 +2,5 @@ requests
 lxml
 RainbowPrint
 prettytable
+chardet
+aiohttp
