@@ -15,6 +15,7 @@ from .book import Book, Chapter
 from .setting import SettingAccessable, SettingManager
 from .logger import Loggable
 from .exceptions import *
+from .utils import get_async_result
 
 
 class MaxRetriesError(Exception):
@@ -92,7 +93,7 @@ class Spider(SettingAccessable, Loggable):
         self.close()
 
     def close(self):
-        self.session.close()
+        get_async_result(self.session.close())
 
     async def get_html(self, url, params: dict[str, str] = {}, headers: dict[str, str] = {}, **kparams) -> etree.Element:
         """

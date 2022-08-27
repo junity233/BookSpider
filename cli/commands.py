@@ -184,7 +184,7 @@ def select_spider(spiders: list[Spider]) -> Spider:
 
 
 def get(url, *params):
-    kwargs = args_to_kwargs(params)
+    kwargs = args_to_kwargs(*params)
     vaild_spiders = mgr.get_vaild_spiders(url, **kwargs)
     if len(vaild_spiders) == 0:
         logger.log_error("No spider match the url!")

@@ -52,7 +52,7 @@ class Manager(Loggable, SettingAccessable):
         self.db.open(self.get_setting("database", "books.db"))
 
     def close(self) -> None:
-        for spider in self.spiders:
+        for spider in self.spiders.values():
             spider.close()
         self.db.close()
 

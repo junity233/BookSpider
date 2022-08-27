@@ -15,7 +15,7 @@ logger = Logger("Console")
 
 vaild_func = {
     "quit": lambda: quit(),
-    "exit": lambda: exit(),
+    "exit": lambda: quit(),
     "credis": lambda: credits()
 }
 
@@ -78,3 +78,6 @@ def cli_main(manager: Manager):
         except KeyboardInterrupt:
             print("")
             continue
+        except SystemExit:
+            manager.close()
+            quit()
