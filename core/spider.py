@@ -56,12 +56,12 @@ class Spider(SettingAccessable, Loggable):
         self.session = None
         self.max_retry = self.get_setting("max_retry", 10)
         self.timeout = self.get_setting("timeout", 5)
-        self.semaphore = asyncio.Semaphore(100)
+        self.semaphore = asyncio.Semaphore(self.get_setting("semaphore", 100))
 
     def create_session(self):
         return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout))
 
-    async def get(self, url: str, params={}, headers: dict[str, str] = {}, use_session=True, **kparams):
+    async def async_get(self, url: str, params={}, headers: dict[str, str] = {}, use_session=True, **kparams):
         """
             发送Get请求,会重试直到成功获取
         """
@@ -93,13 +93,14 @@ class Spider(SettingAccessable, Loggable):
         self.close()
 
     def close(self):
-        get_async_result(self.session.close())
+        if self.session:
+            get_async_result(self.session.close())
 
-    async def get_html(self, url, params: dict[str, str] = {}, headers: dict[str, str] = {}, **kparams) -> etree.Element:
+    async def async_get_html(self, url, params: dict[str, str] = {}, headers: dict[str, str] = {}, **kparams) -> etree.Element:
         """
             使用self.get获取网页并用 `etree.HTML` 解析
         """
-        res = await self.get(url, headers, params, **kparams)
+        res = await self.async_get(url, headers, params, **kparams)
         content: bytes = None
         for _ in range(self.max_retry):
             try:
@@ -113,9 +114,91 @@ class Spider(SettingAccessable, Loggable):
                 return etree.HTML(text)
         raise MaxRetriesError("GetHTML", url, params, headers)
 
-    async def get_image(self, url):
-        img = await self.get(url)
+    async def async_get_image(self, url) -> tuple[bytes, str]:
+        """
+            下载图片,返回图片内容和拓展名(根据mimetype猜测)
+        """
+        img = await self.async_get(url)
         return await img.read(), mimetypes.guess_extension(img.headers["Content-Type"])
+
+    async def async_post(self, url, params: dict = {}, headers: dict = {}, use_session=True, **kparams) -> requests.Response:
+        """
+            发送Post请求,会重复发送直到成功
+        """
+        headers.update({
+            "user_agent": Spider.user_agent,
+            "cookie": self.cookie
+        })
+
+        params.update(kparams)
+
+        if self.session == None:
+            self.session = self.create_session()
+
+        for _ in range(self.max_retry):
+            try:
+                async with self.semaphore:
+                    if use_session:
+                        return await self.session.post(url=url, headers=headers,
+                                                       params=params)
+                    else:
+                        async with self.create_session() as session:
+                            return await session.post(url=url, headers=headers, params=params)
+            except aiohttp.ServerTimeoutError:
+                continue
+
+        raise MaxRetriesError("POST", url, params, headers)
+
+    def get(self, url: str, params={}, headers: dict[str, str] = {}, **kparams):
+        """
+            使用requests实现的同步get
+        """
+        if self.cookie != "":
+            headers["Cookie"] = self.cookie
+        headers["User-Agent"] = self.user_agent
+
+        params.update(kparams)
+
+        for _ in range(self.max_retry):
+            try:
+                return requests.get(url=url, headers=headers, params=params, timeout=self.timeout)
+            except:
+                pass
+
+        raise MaxRetriesError("GET", url, params, headers)
+
+    def get_html(self, url: str, params={}, headers: dict[str, str] = {}, **kparams):
+        res = self.get(url, params, headers, **kparams)
+        text = ""
+        if res.encoding == None:
+            encoding = cchardet.detect(res.content)["encoding"]
+            text = res.content.decode(encoding)
+        else:
+            text = res.text
+
+        return etree.HTML(text)
+
+    def get_image(self, url: str, params={}, headers: dict[str, str] = {}, **kparams) -> tuple[bytes, str]:
+        res = self.get(url, params, headers).content
+        return res.content, mimetypes.guess_extension(res.headers["Content-Type"])
+
+    def post(self, url: str, params={}, headers: dict[str, str] = {}, **kparams):
+        """
+            使用requests实现的同步post
+        """
+        if self.cookie != "":
+            headers["Cookie"] = self.cookie
+        headers["User-Agent"] = self.user_agent
+
+        params.update(kparams)
+
+        for _ in range(self.max_retry):
+            try:
+                return requests.post(url=url, headers=headers, data=params, timeout=self.timeout)
+            except:
+                pass
+
+        raise MaxRetriesError("POST", url, params, headers)
 
     @ staticmethod
     def get_ele_content(ele: etree._Element) -> str:
@@ -145,43 +228,11 @@ class Spider(SettingAccessable, Loggable):
         else:
             return datetime(1970, 1, 1)
 
-    async def post(self, url, params: dict = {}, headers: dict = {}, use_session=True, **kparams) -> requests.Response:
-        """
-            发送Post请求,会重复发送直到成功
-        """
-        headers.update({
-            "user_agent": Spider.user_agent,
-            "cookie": self.cookie
-        })
-
-        params.update(kparams)
-
-        if self.session == None:
-            self.session = self.create_session()
-
-        for _ in range(self.max_retry):
-            try:
-                async with self.semaphore:
-                    if use_session:
-                        return await self.session.post(url=url, headers=headers,
-                                                       params=params)
-                    else:
-                        async with self.create_session() as session:
-                            return await session.post(url=url, headers=headers, params=params)
-            except aiohttp.ServerTimeoutError:
-                continue
-
-        raise MaxRetriesError("POST", url, params, headers)
-
     def update_setting(self, key: str, value: Any) -> None:
         if key == "cookie":
             self.cookie = value
-
-    def post_json(self, url, params: dict = {}, headers: dict = {}, **kparams) -> dict[str, object]:
-        """
-            使用 `self.post` 发送请求并解码json
-        """
-        return self.post(url, params, headers, **kparams).json()
+        if key == "semaphore":
+            self.session = asyncio.Semaphore(value)
 
     def make_book(self, title="", author="", source="", desc="", style="", idx=-1, chapter_count=0, cover=None, cover_format=None, status=True, update=datetime(1970, 1, 1), publish=datetime(1970, 1, 1)):
         return Book(
@@ -232,7 +283,7 @@ class Spider(SettingAccessable, Loggable):
             self.get_chapter_content
         )
 
-    async def search_book(self, keyword: str, author="", style="", **params) -> Iterable[Book]:
+    def search_book(self, keyword: str, author="", style="", **params) -> Iterable[Book]:
         """
             使用给定的信息查询书籍。
         """
@@ -241,9 +292,11 @@ class Spider(SettingAccessable, Loggable):
             self.search_book
         )
 
-    async def get_all_book(self, **param) -> Iterable[Book]:
+    def get_all_book(self, **param) -> Iterable[Book]:
         """
             获取所有的书籍列表,只需要书籍的title与source
+
+            这是一个迭代器
         """
         raise NonimplentException(
             self.__class__,

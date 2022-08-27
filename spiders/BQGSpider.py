@@ -16,11 +16,11 @@ class BQGSpider(Spider):
         return url.startswith('https://www.xbiquge.so/') or url.startswith('http://www.xbiquge.so/')
 
     async def get_book_info(self, book: Book, **params) -> tuple[Book, Any]:
-        html = await self.get_html(book.whole_url)
+        html = await self.async_get_html(book.whole_url)
         book.title = html.xpath(r'//*[@id="info"]/h1/text()')[0]
         book.author = html.xpath(r'//*[@id="info"]/p[1]/a/text()')[0]
         book.desc = Spider.get_ele_content(html.xpath(r'//*[@id="intro"]')[0])
-        book.cover, book.cover_format = await self.get_image(
+        book.cover, book.cover_format = await self.async_get_image(
             html.xpath(r'//*[@id="fmimg"]/img/@src')[0])
         book.update = Spider.match_date(
             html.xpath(r'//*[@id="info"]/p[3]/text()')[0])
@@ -55,7 +55,7 @@ class BQGSpider(Spider):
     async def get_chapter_content(self, chapter: Chapter, data: Any, silent=False, **params) -> Chapter:
         chapter.title = data[0]
 
-        html = await self.get_html(data[1])
+        html = await self.async_get_html(data[1])
 
         content = html.xpath(r'//*[@id="content"]')[0]
         content.text = ""
@@ -67,8 +67,8 @@ class BQGSpider(Spider):
 
         return chapter
 
-    async def get_all_book(self, start=1, end=-1, **param) -> Iterable[Book]:
-        html = await self.get_html(r'https://www.xbiquge.so/top/allvisit/1.html')
+    def get_all_book(self, start=1, end=-1, **param) -> Iterable[Book]:
+        html = self.get_html(r'https://www.xbiquge.so/top/allvisit/1.html')
         pagenum = int(html.xpath(
             r'//*[@id="pagestats"]//text()')[0].split('/')[1])
 

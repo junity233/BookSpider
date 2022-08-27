@@ -17,6 +17,7 @@ from .logger import Loggable
 from .utils import *
 
 CONFIG_FILE_NAME = "config.json"
+DEFAULT_DB_FILE = "books.db"
 
 
 class SpiderNotFoundError(Exception):
@@ -49,7 +50,7 @@ class Manager(Loggable, SettingAccessable):
         self.init_loaded_spiders()
 
         self.db = Database()
-        self.db.open(self.get_setting("database", "books.db"))
+        self.db.open(self.get_setting("database", DEFAULT_DB_FILE))
 
     def close(self) -> None:
         for spider in self.spiders.values():
@@ -198,12 +199,9 @@ class Manager(Loggable, SettingAccessable):
 
         return book_list
 
-    def get_all_book(self, spider: Spider, **params) -> list[Book]:
-        book_list = get_async_result(spider.get_all_book(**params))
-
+    def get_all_book(self, spider: Spider, **params) -> list[int]:
         res = []
-
-        for book in book_list:
+        for book in spider.get_all_book(**params):
             try:
                 if self.is_book_need_update(book):
                     t = self.get_book(book.source, spider, **params)
