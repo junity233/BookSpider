@@ -7,6 +7,9 @@ import re
 from threading import Lock
 from os import path
 import importlib
+from time import sleep
+from typing import Union
+import aiofiles
 
 from .book import Book, Chapter
 from .setting import SettingAccessable, SettingManager
@@ -101,14 +104,15 @@ class Manager(Loggable, SettingAccessable):
                         self.db.update_chapter(chapter)
                     else:
                         self.db.insert_chapter(chapter)
-                self.log_info(f"Book '{book.title}' updated.")
+                self.log_info(
+                    f"Book '{book.title}' updated.index = {book.idx};")
 
             else:
                 self.db.create_book(book)
                 self.db.insert_chapters(book.chapters)
-                self.log_info(f"Book '{book.title}' created.")
+                self.log_info(f"Book '{book.title}' created.index={book.idx};")
 
-    def get_book(self, url: str, spider: Spider, **params) -> Book:
+    def get_book(self, url: str, spider: Spider, **params) -> Union[Book, None]:
         """
             使用给定的Spide获取书籍
         """
@@ -160,7 +164,7 @@ class Manager(Loggable, SettingAccessable):
 
         loop.run_until_complete(asyncio.gather(*tasks))
 
-        while len(failed_chapters) > 0:
+        for _ in range(self.max_retry):
             t = failed_chapters
             failed_chapters = []
             tasks = []
@@ -169,6 +173,12 @@ class Manager(Loggable, SettingAccessable):
                 tasks.append(get_chapter_content_warpper(
                     chapter, chapter_data))
             loop.run_until_complete(asyncio.gather(*tasks))
+
+            if len(failed_chapters) > 0:
+                continue
+            break
+        else:
+            return None
 
         chapter_list.sort()
         book.chapters = chapter_list
@@ -217,10 +227,11 @@ class Manager(Loggable, SettingAccessable):
                     self.log_error(
                         f"Get book '{book.title}' source='{book.source}' error:{e}")
                     logging.exception(e)
-                    continue
                 else:
-                    res.append(t.idx)
+                    if t != None:
+                        res.append(t.idx)
                     break
+                sleep(0.5)
 
         return res
 
@@ -246,7 +257,16 @@ class Manager(Loggable, SettingAccessable):
         for i in book_list:
             spider = self.spiders[i.spider]
             self.log_info(f"Checking book '{i.title}'...")
-            self.get_book(i.source, spider, **params)
+
+            for _ in range(self.max_retry):
+                try:
+                    self.get_book(i.source, spider, **params)
+                except Exception as e:
+                    self.log_error(f"Check book {i.title} error:{e}")
+                    logging.exception(e)
+                    continue
+                else:
+                    break
         self.log_info("Check all books successfully")
 
     def export_book(self, book_info: Book, chapters: list[Chapter], out_path=path.curdir) -> None:
@@ -272,6 +292,29 @@ class Manager(Loggable, SettingAccessable):
             self.log_info(
                 f"Successfully export '{book_info.title}' to {out_path}")
 
+    async def async_export_book(self, book_info: Book, chapters: list[Chapter], out_path=path.curdir) -> None:
+        if path.isdir(out_path):
+            title = re.sub(r"[\/\\\:\*\?\"\<\>\|]", "_",
+                           book_info.title)  # 过滤不合法字符
+            out_path = path.join(out_path, title+".txt")
+
+        try:
+            async with aiofiles.open(out_path, "w", encoding="utf-8") as f:
+                await f.write(book_info.title+"\n\n")
+                await f.write(book_info.desc + "\n\n")
+
+                for chapter in chapters:
+                    await f.write(chapter.title+"\n")
+                    await f.write(chapter.content+"\n")
+
+            async with aiofiles.open(out_path+book_info.cover_format, "wb") as f:
+                await f.write(book_info.cover)
+        except FileNotFoundError:
+            self.log_error("Path not found")
+        else:
+            self.log_info(
+                f"Successfully export '{book_info.title}' to {out_path}")
+
     def export_book_by_id(self, book_index: int, out_path=path.curdir) -> None:
         self.db.check_book_exist(Id=book_index)
         book_info = self.query_book(Id=book_index)[0]
@@ -279,12 +322,16 @@ class Manager(Loggable, SettingAccessable):
 
         self.export_book(book_info, chapters, out_path)
 
-    def export_all_book(self, out_path=path.curdir):
+    def export_all_book(self, out_path=path.curdir) -> None:
         books = self.db.query_book_info()
 
+        tasks = []
         for book in books:
             chapters = self.db.query_all_chapters(book.idx)
-            self.export_book(book, chapters, out_path)
+            tasks.append(self.async_export_book(book, chapters, out_path))
+
+        with asyncio.get_event_loop() as loop:
+            loop.run_until_complete(asyncio.gather(*tasks))
 
     def load_spider(self, name: str) -> None:
         spider: Spider = None
@@ -322,3 +369,31 @@ class Manager(Loggable, SettingAccessable):
             self.set_setting("loaded_spiders", loaded_spiders)
         else:
             raise SpiderNotFoundError(name)
+
+    def load_proxy_provider(self, name: str):
+        proxy_provider: ProxyProvider = None
+        if name in self.proxy_providers.keys():
+            return
+
+        try:
+            module = importlib.import_module(f".{name}", "proxy_provider")
+            proxy_provider = module.__dict__[name](self.setting_manager)
+            if not isinstance(proxy_provider, ProxyProvider):
+                self.log_error(
+                    "ProxyProvider must inherit from ProxyProvider class.")
+                return
+        except ModuleNotFoundError:
+            self.log_error(f"ProxyProvider '{name}' not found.")
+        else:
+            self.proxy_providers[name] = proxy_provider
+            self.log_info(f"Successfully load ProxyProvider '{name}'")
+
+    def init_loaded_providers(self):
+        for name in self.get_setting("proxy_providers", []):
+            self.load_proxy_provider(name)
+
+    def add_proxy_provider(self, name):
+        self.load_proxy_provider(name)
+        providers = self.get_setting("proxy_providers", [])
+        providers.append(name)
+        self.set_setting("proxy_providers", providers)

@@ -70,11 +70,14 @@ class Spider(SettingAccessable, Loggable):
         self.semaphore = asyncio.Semaphore(self.get_setting("semaphore", 100))
 
     def create_session(self):
+        """
+            创建一个aiohttp.ClientSession
+        """
         return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout))
 
     async def async_get(self, url: str, params={}, headers: dict[str, str] = {}, use_session=True, **kparams):
         """
-            发送Get请求,会重试直到成功获取
+            发送Get请求,会重试直到成功获取或超过max_retry
         """
 
         if self.cookie != "":
@@ -179,8 +182,8 @@ class Spider(SettingAccessable, Loggable):
             except asyncio.exceptions.TimeoutError:
                 continue
             except aiohttp.client_exceptions.ClientConnectionError as e:
-                if e.args[0]=="Connection closed":
-                    img=await self.async_get(url)
+                if e.args[0] == "Connection closed":
+                    img = await self.async_get(url)
                 continue
             else:
                 return content, mimetypes.guess_extension(img.headers["Content-Type"])
@@ -325,7 +328,12 @@ class Spider(SettingAccessable, Loggable):
         if key == "cookie":
             self.cookie = value
         if key == "semaphore":
-            self.session = asyncio.Semaphore(value)
+            self.semaphore = asyncio.Semaphore(value)
+        if key == "max_retry":
+            self.max_retry = value
+        if key == "timeout":
+            self.timeout = value
+            self.session = self.create_session()
 
     def make_book(self, title="", author="", source="", desc="", style="", idx=-1, chapter_count=0, cover=None, cover_format=None, status=True, update=datetime(1970, 1, 1), publish=datetime(1970, 1, 1)):
         return Book(

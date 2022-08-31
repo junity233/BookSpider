@@ -153,12 +153,12 @@ class Database(Loggable):
     def check_primary_table_exist(self) -> None:
         with self.db_lock:
             try:
-                res = self.query("Select 1 from Books;")
+                self.execute("Select 1 from Books;")
             except sqlite3.OperationalError:
                 self.create_books_table()
 
             try:
-                res = self.query("Select 1 from Chapters;")
+                self.execute("Select 1 from Chapters;")
             except sqlite3.OperationalError:
                 self.create_chapters_table()
 

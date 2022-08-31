@@ -4,3 +4,4 @@ RainbowPrint
 prettytable
 chardet
 aiohttp
+aiofiles
