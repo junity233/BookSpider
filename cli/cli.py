@@ -13,17 +13,41 @@ from . import commands
 
 logger = Logger("Console")
 
-vaild_func = {
-    "quit": lambda: quit(),
-    "exit": lambda: quit(),
-    "credis": lambda: credits()
-}
+vaild_func = {}
+
+
+@commands.command("Get help", "Name of the command")
+def help(name: str = None):
+    def get_declaration(func):
+        msg = func.__name__+" "
+        for i in func.__arg_commit__:
+            msg += f'<{i[0]}> '
+        return msg
+
+    if name == None:
+        print(f"Book Spider {VERSION} Manual\n")
+        for func in vaild_func.values():
+            print("%-25s : %s" %
+                  (get_declaration(func), func.__command_commit__))
+    else:
+        func = None
+
+        if name in vaild_func.keys():
+            func = vaild_func[name]
+        else:
+            print(f"Command '{name}' is not found.")
+            return
+
+        print(f"Usage : {get_declaration(func)} \n")
+        for arg in func.__arg_commit__:
+            print(f"{arg[0]} : {arg[1]}")
 
 
 def init(manager: Manager):
     for k, v in commands.__dict__.items():
-        if isfunction(v) and ("__not_command__" not in v.__dict__.keys() or v.__not_command__ == False):
+        if isfunction(v) and ("__is_command__" in v.__dict__.keys() and v.__is_command__ == True):
             vaild_func[k] = v
+    vaild_func["help"] = help
     commands.mgr = manager
 
 

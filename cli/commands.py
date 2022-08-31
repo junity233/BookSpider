@@ -6,25 +6,31 @@ from core.spider import Spider
 
 """
     Cli的命令模块
-    在此模块内定义的所有方法都将被视为命令,除非使用not_command修饰
 """
 
 mgr: Manager = None
 logger = Logger("Console")
 
 
-def not_command(func):
+def command(commit, *args, **kargs):
     """
-        非命令方法的修饰符
+        为命令添加注释
     """
-    func.__not_command__ = True
-    return func
+    def res(func):
+        func.__command_commit__ = commit
+        func.__is_command__ = True
+        func.__arg_commit__ = []
+        for idx, arg in enumerate(func.__code__.co_varnames):
+            if idx >= len(args):
+                if arg in kargs:
+                    func.__arg_commit__.append(arg, kargs[arg])
+            else:
+                func.__arg_commit__.append((arg, args[idx]))
+        return func
+
+    return res
 
 
-not_command.__not_command__ = True
-
-
-@not_command
 def call_func_by_op(func_table: dict[str], op: str, *params):
     if op in func_table.keys():
         func = func_table[op]
@@ -33,7 +39,6 @@ def call_func_by_op(func_table: dict[str], op: str, *params):
         print("Unknown Operation.")
 
 
-@not_command
 def args_to_kwargs(*args) -> dict[str, str]:
     kwargs = {}
     for i in args:
@@ -44,6 +49,7 @@ def args_to_kwargs(*args) -> dict[str, str]:
     return kwargs
 
 
+@command("Manager settings", "Operation", "The params of the operatrion.")
 def setting(op, *params):
     setmgr = mgr.setting_manager
 
@@ -96,6 +102,7 @@ def setting(op, *params):
     call_func_by_op(func_table, op, *params)
 
 
+@command("Manager spiders", "Operation", "The params of the operatrion.")
 def spider(op: str, *params):
     def add_spider(name: str):
         mgr.add_spider(name)
@@ -119,6 +126,7 @@ def spider(op: str, *params):
     call_func_by_op(func_table, op, *params)
 
 
+@command("Managers Books", "Operation", "The params of the operatrion.")
 def book(op: str, *params):
     def search(*params):
         kwargs = args_to_kwargs(*params)
@@ -169,7 +177,6 @@ def book(op: str, *params):
     call_func_by_op(func_table, op, *params)
 
 
-@not_command
 def select_spider(spiders: list[Spider]) -> Spider:
     print("Select a spider:")
     for idx, i in enumerate(spiders):
@@ -183,6 +190,7 @@ def select_spider(spiders: list[Spider]) -> Spider:
     return spiders[num]
 
 
+@command("Get book from url", "Thr url", "The params that pass to the spider.")
 def get(url, *params):
     kwargs = args_to_kwargs(*params)
     vaild_spiders = mgr.get_vaild_spiders(url, **kwargs)
@@ -195,6 +203,7 @@ def get(url, *params):
     mgr.get_book(url, spider, **kwargs)
 
 
+@command("Get all books in the specificed site.", "The params that pass to the spider")
 def site(*params):
     spiders = list(mgr.spiders.values())
     if len(spiders) == 0:
@@ -206,21 +215,27 @@ def site(*params):
     mgr.get_all_book(spider, **args_to_kwargs(*params))
 
 
+@command("Run sql", "The sql")
+def runsql(*params):
+    sql = ""
+    for i in params:
+        sql += i+" "
+    res = mgr.db.query(sql)
+    table = PrettyTable()
+    table.add_rows(res)
+    print(table)
+
+
+@command("Commit to the database.")
 def commit():
     mgr.db.commit()
 
 
+@command("Rollback database.")
 def rollback():
     mgr.db.rollback()
 
 
-def help():
-    print("Book Spider Manual\n")
-    print("setting              | Access setting.")
-    print("book                 | Manage books")
-    print("spider               | Manage spiders")
-    print("commit               | Commit to database")
-    print("rollback             | Rollback to database")
-    print("get <url>            | Get book")
-    print("site                 | Get all book")
-    print("")
+@command("Exit")
+def exit():
+    quit()
