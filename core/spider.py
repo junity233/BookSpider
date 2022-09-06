@@ -61,6 +61,7 @@ class Spider(SettingAccessable, Loggable):
         if name == "":
             name = self.__class__.__name__
         SettingAccessable.__init__(self, setting_manager, field)
+        Loggable.__init__(self)
         self.cookie = self.get_setting("cookie", "")
         self.user_agent = self.get_setting(
             "user_agent", r"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36")
@@ -340,13 +341,14 @@ class Spider(SettingAccessable, Loggable):
             title, author, source, self.name, desc, style, idx, chapter_count, cover, cover_format, status, update, publish
         )
 
-    def check_url(self, url: str, **params) -> bool:
+    @staticmethod
+    def check_url(url: str, **params) -> bool:
         """
             检查URL是否可以被该Spider爬取
         """
         raise NonimplentException(
-            self.__class__,
-            self.check_url
+            Spider,
+            Spider.check_url
         )
 
     async def get_book_info(self, book: Book,  **params) -> tuple[Book, Any]:

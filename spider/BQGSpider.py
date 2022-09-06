@@ -12,7 +12,8 @@ class BQGSpider(Spider):
     def __init__(self, setting_manager: SettingManager) -> None:
         super().__init__(setting_manager)
 
-    def check_url(self, url: str, **params) -> bool:
+    @staticmethod
+    def check_url(url: str, **params) -> bool:
         return url.startswith('https://www.xbiquge.so/') or url.startswith('http://www.xbiquge.so/')
 
     async def get_book_info(self, book: Book, **params) -> tuple[Book, Any]:

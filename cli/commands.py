@@ -3,6 +3,7 @@ from core.logger import Logger
 from prettytable import PrettyTable
 
 from core.spider import Spider
+from core.extension_manager import ExtensionManager
 
 """
     Cli的命令模块
@@ -39,14 +40,28 @@ def call_func_by_op(func_table: dict[str], op: str, *params):
         print("Unknown Operation.")
 
 
-def args_to_kwargs(*args) -> dict[str, str]:
+def args_to_kwargs(*params) -> dict[str, str]:
     kwargs = {}
-    for i in args:
+    args = []
+    for i in params:
         if '=' in i:
             strs = i.split('=')
             kwargs[strs[0].strip()] = strs[1].strip()
+        else:
+            args.append(i)
 
-    return kwargs
+    return args, kwargs
+
+
+def select(name, items: list[str]):
+    if not isinstance(items, list):
+        items = list(items)
+    print(f'Select a {name}:')
+    for idx, i in enumerate(items):
+        print(f"    {idx}.{i}")
+
+    idx = int(input(f"(number 0-{len(items)-1}):"))
+    return items[idx]
 
 
 @command("Manager settings", "Operation", "The params of the operatrion.")
@@ -105,13 +120,13 @@ def setting(op, *params):
 @command("Manager spiders", "Operation", "The params of the operatrion.")
 def spider(op: str, *params):
     def add_spider(name: str):
-        mgr.add_spider(name)
+        mgr.spiders_manager.add_extension(name)
 
     def remove_spider(name: str):
-        mgr.remove_spider(name)
+        mgr.spiders_manager.remove_extension(name)
 
     def list_spiders():
-        for name in mgr.spiders.keys():
+        for name in mgr.spiders_manager.get_extension_list():
             print(name)
 
     def help():
@@ -129,13 +144,13 @@ def spider(op: str, *params):
 @command("Managers Books", "Operation", "The params of the operatrion.")
 def book(op: str, *params):
     def search(*params):
-        kwargs = args_to_kwargs(*params)
+        args, kwargs = args_to_kwargs(*params)
 
         table = PrettyTable(
             ["Id", "Title", "Author", "Chapter Count", "Style", "Status", "Publish Date", "Update Date"])
         cnt = 0
 
-        for book in mgr.query_book(**kwargs):
+        for book in mgr.query_book(-1, -1, *args, **kwargs):
             table.add_row([book.idx, book.title, book.author, book.chapter_count, book.style,
                           "End" if book.status else "Not End", book.publish, book.update])
             cnt += 1
@@ -151,14 +166,12 @@ def book(op: str, *params):
             mgr.check_book(index, *params)
 
     def export(index, outpath="."):
-        try:
-            index = int(index)
-            mgr.export_book_by_id(index, outpath)
-        except ValueError:
-            if index == "all":
-                mgr.export_all_book(outpath)
-            else:
-                logger.log_error("Invaild arguement")
+        exporter = select(
+            "Book exporter", mgr.book_exporters_manager.get_extension_list())
+        exporter = mgr.book_exporters_manager.extensions[exporter]
+
+        index = int(index)
+        mgr.export_book_by_id(index, exporter, outpath)
 
     def remove(index):
         index = int(index)
@@ -177,42 +190,48 @@ def book(op: str, *params):
     call_func_by_op(func_table, op, *params)
 
 
-def select_spider(spiders: list[Spider]) -> Spider:
-    print("Select a spider:")
-    for idx, i in enumerate(spiders):
-        print(f"    {idx}. {i.name}")
-    print("")
-    num = int(input("> (number) :"))
+@command("Manage book exporter", "Operation", "Params")
+def exporter(op: str, *params):
+    def add(name):
+        mgr.book_exporters_manager.add_extension(name)
 
-    if num < 0 or num > len(spiders):
-        logger.log_error("Invaild number.")
+    def remove(name):
+        mgr.book_exporters_manager.remove_extension(name)
 
-    return spiders[num]
+    def _list():
+        for i in mgr.book_exporters_manager.get_extension_list():
+            print(i)
+
+    func_table = {
+        "add": add,
+        "remove": remove,
+        "list": _list
+    }
+
+    call_func_by_op(func_table, op, *params)
 
 
 @command("Get book from url", "Thr url", "The params that pass to the spider.")
 def get(url, *params):
-    kwargs = args_to_kwargs(*params)
+    _, kwargs = args_to_kwargs(*params)
     vaild_spiders = mgr.get_vaild_spiders(url, **kwargs)
     if len(vaild_spiders) == 0:
         logger.log_error("No spider match the url!")
         return
 
-    spider = select_spider(vaild_spiders)
-
+    spider = mgr.spiders_manager.extensions[select("spider", vaild_spiders)]
     mgr.get_book(url, spider, **kwargs)
 
 
 @command("Get all books in the specificed site.", "The params that pass to the spider")
 def site(*params):
-    spiders = list(mgr.spiders.values())
+    spiders = mgr.spiders_manager.get_extension_list()
     if len(spiders) == 0:
         logger.log_error("No spider added.")
         return
 
-    spider = select_spider(spiders)
-
-    mgr.get_all_book(spider, **args_to_kwargs(*params))
+    spider = mgr.spiders_manager.extensions[select("spider", spiders)]
+    mgr.get_all_book(spider, **(args_to_kwargs(*params)[1]))
 
 
 @command("Run sql", "The sql")

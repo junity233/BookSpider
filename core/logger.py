@@ -14,17 +14,26 @@ log_lock = Lock()
 
 
 class Loggable:
+    name: str
+
+    def __init__(self, name: str = None) -> None:
+        if name != None:
+            self.name = name
+        else:
+            self.name = self.__class__.__name__
+        pass
+
     def log_debug(self, msg):
         with log_lock:
-            RP.rainbow_debug(make_msg("Debug", self.__class__.__name__, msg))
+            RP.rainbow_debug(make_msg("Debug", self.name, msg))
 
     def log_info(self, msg):
         with log_lock:
-            RP.rainbow_info(make_msg("Info", self.__class__.__name__, msg))
+            RP.rainbow_info(make_msg("Info", self.name, msg))
 
     def log_error(self, msg):
         with log_lock:
-            RP.rainbow_error(make_msg("Error", self.__class__.__name__, msg))
+            RP.rainbow_error(make_msg("Error", self.name, msg))
 
 
 class Logger:

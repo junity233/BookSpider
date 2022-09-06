@@ -73,6 +73,7 @@ class Database(Loggable):
         self.db_lock = RLock()
         self.connection = None
         self.cursor = None
+        Loggable.__init__(self)
 
         if db_file_path != "":
             self.open(db_file_path)
@@ -230,11 +231,11 @@ class Database(Loggable):
 
         return book
 
-    def is_book_exist(self, **params) -> bool:
+    def is_book_exist(self, *params, **kparams) -> bool:
         """
             判断满足条件的书籍是否存在
         """
-        res = self.query_book_info(**params)
+        res = self.query_book_info(*params, **kparams)
         return len(res) > 0
 
     def check_book_exist(self, **params) -> None:
@@ -350,27 +351,34 @@ class Database(Loggable):
         )
 
     @staticmethod
-    def make_condition(**params):
-        sql = "Where " if len(params) > 0 else ""
+    def make_condition(*params, **kparams):
+        sql = "Where " if len(kparams) + len(params) > 0 else ""
         flag = False
 
-        for k, v in params.items():
+        for k, v in kparams.items():
             if flag:
                 sql += "and "
             else:
                 flag = True
             if type(v) == type(""):
-                sql += f"{k} like '%{v}%' "
+                sql += f"{k} == '{v}' "
             elif type(v) == type(0):
                 sql += f"{k} == {v} "
             else:
                 raise UnsupportedType(v.__class__)
 
+        for i in params:
+            if flag:
+                sql += "and "+i
+            else:
+                sql += i
+                flag = True
+
         return sql
 
-    def query_book_info(self, limit=-1, offset=-1, **params) -> list[Book]:
+    def query_book_info(self, limit=-1, offset=-1, *params, **kparams) -> list[Book]:
         sql = "Select * From Books "
-        sql += Database.make_condition(**params)
+        sql += Database.make_condition(*params, **kparams)
         if limit != -1:
             sql += f"Limit {limit} "
         if offset != -1:

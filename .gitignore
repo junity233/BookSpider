@@ -1,5 +1,6 @@
+**/__pycache__
+__pycache__
 .vscode
 .VSCodeCounter
-__pycache__
-*.db
 config.json
+books.db
