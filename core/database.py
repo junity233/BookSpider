@@ -1,8 +1,6 @@
 from datetime import datetime
 import sqlite3
 from threading import RLock
-from tkinter.messagebox import NO
-from turtle import update
 
 from .spider import Spider
 from .book import Book, Chapter

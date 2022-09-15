@@ -6,7 +6,7 @@ from lxml import etree
 from datetime import date, datetime
 import mimetypes
 import urllib3.exceptions
-import cchardet
+import chardet
 import aiohttp
 import aiohttp.client_exceptions
 import asyncio
@@ -146,7 +146,7 @@ class Spider(SettingAccessable, Loggable):
         else:
             raise MaxRetriesError("GetText", url, params, headers)
 
-        detect_encoding = cchardet.detect(content)["encoding"]
+        detect_encoding = chardet.detect(content)["encoding"]
         probably_charsets = [
             encoding, detect_encoding, "utf-8", "gbk", "gb2312"]
 
@@ -253,7 +253,7 @@ class Spider(SettingAccessable, Loggable):
             pass
         content: bytes = res.content
 
-        detect_encoding = cchardet.detect(content)["encoding"]
+        detect_encoding = chardet.detect(content)["encoding"]
         probably_charsets = [
             encoding, detect_encoding, "utf-8", "gbk", "gb2312"]
 

@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 from cli.cli import cli_main
 from core.manager import Manager
 

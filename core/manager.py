@@ -239,7 +239,7 @@ class Manager(Loggable, SettingAccessable):
         self.db.check_book_exist(Id=book_index)
         book_old = self.db.query_book_info(Id=book_index)[0]
 
-        spider = self.spiders_manager[book_old.spider]
+        spider = self.spiders_manager.extensions[book_old.spider]
 
         self.get_book(book_old.source, spider, **params)
         self.log_info(f"Check book'{book_old.title}' successfully.")
@@ -247,7 +247,7 @@ class Manager(Loggable, SettingAccessable):
     def check_all_book(self, **params) -> None:
         book_list = self.db.query_book_info(Status=0)
         for i in book_list:
-            spider = self.spiders_manager[i.spider]
+            spider = self.spiders_manager.extensions[i.spider]
             self.log_info(f"Checking book '{i.title}'...")
 
             for _ in range(self.max_retry):

@@ -4,6 +4,7 @@ from core.book import Book, Chapter
 from typing import Any, Iterable
 from lxml.etree import Element
 from urllib.parse import urljoin
+from core.utils import convert_url
 
 
 class BQGSpider(Spider):
@@ -14,7 +15,8 @@ class BQGSpider(Spider):
 
     @staticmethod
     def check_url(url: str, **params) -> bool:
-        return url.startswith('https://www.xbiquge.so/') or url.startswith('http://www.xbiquge.so/')
+        url = convert_url(url)
+        return url.startswith('www.xbiquge.so')
 
     async def get_book_info(self, book: Book, **params) -> tuple[Book, Any]:
         html = await self.async_get_html(book.whole_url)
