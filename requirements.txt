@@ -2,6 +2,7 @@ requests
 lxml
 RainbowPrint
 prettytable
-chardet
+cchardet
 aiohttp
 aiofiles
+ebooklib
