@@ -15,12 +15,16 @@ class TextExporter(BookExpoter):
     async def export_book(self, book: Book, output: str):
         output = TextExporter.fix_path(output, book.title, ".txt")
         async with aiofiles.open(output, "w", encoding="utf-8") as f:
-            await f.write(book.title+"\n\n")
-            await f.write(book.desc + "\n\n")
+            texts = []
+            texts.append(book.title+"\n\n")
+            texts.append(book.desc + "\n\n")
 
             for chapter in book.chapters:
-                await f.write(chapter.title+"\n")
-                await f.write(chapter.content+"\n")
+                texts.append(chapter.title+"\n")
+                texts.append(chapter.content+"\n")
+
+            await f.write(str.join('',texts))
 
         async with aiofiles.open(output+book.cover_format, "wb") as f:
             await f.write(book.cover)
+        self.log_info(f"Successfully export book '{book.title}' to {output}")
